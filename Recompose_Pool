@@ -1,0 +1,156 @@
+########################################################################### 
+# 
+# NAME: Planned Recompositions  
+# 
+# AUTHOR:  DAAS 
+# 
+# COMMENT: VDI - Recompose 
+# 
+# VERSION HISTORY: 
+# 2.0 30/08/2022 - Updated release 
+# 
+# 
+########################################################################### 
+ 
+######################################################################## 
+######### Liste des vCenters ##################### 
+######################################################################## 
+ 
+. "D:\Modules\Connect_HvServer_Param.ps1" 
+$VCtab = New-Object System.Collections.ArrayList 
+######################################################################## 
+######### Requ^tes vRO #################### 
+######################################################################## 
+$sortie = @() 
+$sortie += "" 
+$sortie += "-----------------------------------------------" 
+$sortie += " LAUNCHED RECOMPOSITIONS " 
+$sortie += "-----------------------------------------------" 
+$sortie += "" 
+ 
+ 
+ 
+################################################################################################################ 
+######### Recupération Pools à Recomposer généré par le script : Pools_Recomposition_Status ##################### 
+################################################################################################################ 
+$dateInit = Get-Date 
+#$datefile = (Get-Item "D:\Scripts\DaaSFE\Recompose\Recomposepool.csv").LastWriteTime 
+$PoolToRecompose = @(Import-CSV "D:\Scripts\LGU\DaasFE\Recompose\Recomposepool.csv") 
+#$exceptionFile = "D:\_DaaS_Scheduled_Tasks\Recomposition\exceptions.txt" 
+#$exceptions = Get-Content -Path $exceptionFile 
+ 
+ 
+$step = 10 # minutes 
+$maxRecompoByVCenter = 50 
+ 
+ 
+$orchestratorWorkflowId = "128c3dfb-d7ce-4b9a-b279-858ff896caf5" 
+$urlOrchestrator = "https://fr0-vsdaas-p114.eu.airbus.corp:8281/vco/api/workflows/"+$orchestratorWorkflowId+"/executions" 
+ 
+$credpass = Get-Plaintext $cred.password 
+$NonEncoded = $cred.UserName+":" + $credpass 
+$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(($NonEncoded))) 
+$NonEncoded ="" 
+$Headers = @{ 
+	Authorization = "Basic $base64AuthInfo" 
+} 
+ 
+ 
+ 
+####Requête vRO 
+ 
+function generateData($poolId, $dateRecompo, $datePatch) 
+{ 
+	$data = '{"parameters":[{"value":{"array":{"elements":[{"string":{"value":"'+$poolId+'"}}]}},"type":"Array\/string","name":"pools","scope":"local"},{"value":{"date":{"value":"'+$datePatch+'"}},"type":"date","name":"patchDate","scope":"local"},{"value":{"date":{"value":"'+$dateRecompo+'"}},"type":"date","name":"recompositionDate","scope":"local"},{"value":{"string":{"value":"'+$poolId+'"}},"type":"string","name":"pool","scope":"local"},{"value":{"boolean":{"value":"true"}},"type":"boolean","name":"isSecurityPatch","scope":"local"},{"value":{"string":{"value":"1.0"}},"type":"string","name":"snapshotVersion","scope":"local"},{"value":{"string":{"value":"Re-apply"}},"type":"string","name":"mailPolicy","scope":"local"}]}' 
+	return $data 
+} 
+ 
+ 
+$maintenances = @() 
+ 
+foreach ($broker in $brokers){ 
+$conn = Connect-HVServer -Server $broker -Credential $cred -Domain "eu" -Force 
+ 
+################################### Get vCenter ID ######### 
+. "D:\_DaaS_Scheduled_Tasks\Modules\Get-Vcenter_from ID.ps1" ######### get-VcenterName par ID ##################### 
+$maintenances += Get-HVMachine -state MAINTENANCE -HVServer $conn  | Select-Object -ExpandProperty Base 
+ 
+} 
+foreach($VC in $VCtab) 
+{ 
+	$startPatch = Get-date -Format "2024-06-18 08:00:00"  #yyyy-mm-dd , 24 hr , CET 
+	$startRecompo = Get-date -Format "2024-06-18 22:30:00"  #yyyy-mm-dd , 24 hr , CET 
+    
+ 
+ 
+	$cpt=1 
+ 
+	foreach($pool in $PoolToRecompose){ 
+ 
+    	if ($pool.vcenter -eq $VC.name -and $pool.vcenter -ne "fr0-vsdaas-p130.eu.airbus.corp" -and $pool.vcenter -ne "fr0-vsdaas-p131.eu.airbus.corp"){ 
+                 
+            	$datePatchInit = $startPatch 
+            	$dateInit = $startRecompo 
+                  
+ 
+ 
+        	if ($cpt -le $maxRecompoByVCenter -and $maintenances.name -contains $pool.master) 
+         	{ 
+                         
+                         
+ 
+                         
+                    	$date = (Get-Date $dateInit).addminutes($step * $cpt) 
+                    	$patchDate = (Get-Date $datePatchInit).addminutes($step * $cpt) 
+                         
+                    	$gmt = Get-Date -Format zz00 
+                    	$dateOrchestrator = (Get-Date $date -Format o).Replace('.0000000', '') 
+                    	$dateOrchestrator += $gmt 
+                    	$patchDateOrchestrator = (Get-Date $patchDate -Format o).Replace('.0000000', '') 
+                    	$patchDateOrchestrator += $gmt 
+                    	$poolname= $pool.name 
+                    	#$data = generateData $poolname $dateOrchestrator $patchDateOrchestrator 
+                    	$data 
+                        
+                    	$sortie += $pool.name+' - '+ $pool.vCenter +' - '+ 'PatchMasterDate:' +' '+ (Get-Date $patchDateOrchestrator -Format "dd/MM/yyyy HH:mm") +' - '+ 'RecompoDate:' +' '+ (Get-Date $dateOrchestrator -Format "dd/MM/yyyy HH:mm") 
+                         
+                    	#$sortie += "" 
+                         
+ 
+                    	$cpt = $cpt+1 
+ 
+                    	#ORCHESTRATOR PART START 
+                    	$data = generateData $poolname $dateOrchestrator $patchDateOrchestrator 
+                    	Invoke-WebRequest -Uri $urlOrchestrator -Headers $Headers -Method Post -Body $data -ContentType 'application/json' 
+                    	#ORCHESTRATOR PART END 
+            	} 
+        	} 
+    	} 
+	} 
+ 
+$sortie += "" 
+$sortie += "-----------------------------------------------" 
+#$sortie += " EXCLUDED RECOMPOSITIONS (Exceptions.txt) " 
+$sortie += "-----------------------------------------------" 
+#$sortie += $exceptions 
+ 
+######################################################################## 
+######### Mail et LOG 	############################################## 
+######################################################################## 
+ 
+$date = Get-Date -format dd-MM-yyyy 
+$logfilename = $date + "_recompo_Automatic.txt" 
+$logfile = "D:\Scripts\LGU\DaasFE\Recompose\Logs\" + $logfilename 
+ 
+$smtp = "smtp.airbus.corp" 
+$smtpDev = "novmail.ham.de.eu.airbus.corp" 
+$from = "Recomposition status <no-reply@airbus.com>" 
+$to = "kezia.daryl.external@airbus.com, lenin.gunasekaran.external@airbus.com, gokulkannan.krishnamoorthi.external@airbus.com" 
+ 
+$subject = "DaaS 2.0 LAUNCHED RECOMPOSITIONS_Script - "+$date 
+ 
+$sortie | Out-File $logFile 
+Send-MailMessage -SmtpServer $smtp -To $to -From $from -Subject $subject -Attachments $logfile -Body "LAUNCHED RECOMPOSITIONS - File Attached" -BodyAsHtml  
+$sortie 
+ 
+DisConnect-HVServer -Server $brokers -Confirm:$false 
