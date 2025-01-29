@@ -1,0 +1,104 @@
+$UserName = "EU\SA-K455-VDI" 
+$password = convertto-securestring ",1So:3E,fC\BpNhJ8iU2" -asplaintext -force 
+$Cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $UserName, $password 
+<#Try { 
+	$cred = Import-Clixml "D:\Scripts\DaasFE\Pool_decomissioning\SA-K455-VDI.xml" 
+} 
+Catch {$_ | Export-csv "d:\Modules\Error.csv" -Delimiter ';' -NoTypeInformation} 
+#> 
+function Get-PlainText() { 
+	[CmdletBinding()] 
+	Param( 
+    	[parameter(ValueFromPipeline, Mandatory = $true)] 
+    	[System.Security.SecureString] $SecureString 
+	) 
+	$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString); 
+	try { 
+    	return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr); 
+	} 
+	finally { 
+    	[Runtime.InteropServices.Marshal]::FreeBSTR($bstr); 
+	} 
+} 
+ 
+#SQL information 
+Import-Module SimplySQL 
+$server = "fr0-vsiaas-3113.eu.airbus.corp" 
+$port = "3306" 
+$user = "vdort" 
+$password = "serviceD@@52014" 
+$db = "vdort_db" 
+ 
+ 
+function generateDataDynamicPool($poolId) 
+{ 
+	$data = '{"parameters":[{"value":{"string":{"value":"'+$poolId+'"}},"type":"string","name":"localPoolId","scope":"local"}]}' 
+	return $data 
+} 
+ 
+function generateDataStaticDedicatedPool($poolId) 
+{ 
+	$data = '{"parameters":[{"value":{"string":{"value":"'+$poolId+'"}},"type":"string","name":"poolId","scope":"local"}]}' 
+	return $data 
+} 
+ 
+function generateDataStaticFloatingPool($poolId) 
+{ 
+	$data = '{"parameters":[{"value":{"string":{"value":"'+$poolId+'"}},"type":"string","name":"poolId","scope":"local"}]}' 
+	return $data 
+} 
+ 
+ 
+$poolList = Import-Csv -Path 'D:\Scripts\LGU\DaasFE\Pool_decomissioning\Pool_Delete\To_Delete.csv' 
+ 
+ 
+#Orchestrator informations 
+$credpass = Get-Plaintext $cred.password 
+$NonEncoded = $cred.UserName+":" + $credpass 
+$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(($NonEncoded))) 
+$NonEncoded ="" 
+$Headers = @{ 
+	Authorization = "Basic $base64AuthInfo" 
+} 
+ 
+$wfIDStaticDediPoolDelete = "27906baf-be03-47db-8ebd-87052741a64c" 
+$wfIDStaticFloatPoolDelete = "a7722752-b34e-4b2b-b208-abe9593ce1a0" 
+$wfIDDynamicPoolDelete = "42ce053d-b82b-4d15-8985-fb855cfe4740" 
+ 
+Open-MySqlConnection -Server $server -Port $port -UserName $user -Password $password -Database $db 
+$pool_ToDelete = New-Object System.Collections.ArrayList 
+ 
+for ($i=0;$i -lt $poolList.Count;$i++) 
+{ 
+	Write-Progress -Activity 'Deleting pool' -Status "Processing $($i+1) of $($poolList.count)" -CurrentOperation $($poolList[$i].PoolID) -PercentComplete (($i/$poolList.Count)*100) 
+	$poolIdentifier = $poolList[$i].PoolID 
+	$query = "SELECT pooltype FROM pool WHERE poolName = '$poolIdentifier'" 
+	$pool_type = Invoke-SqlQuery -Query $query 
+     
+	switch ($pool_type.pooltype) 
+	{ 
+        
+    	#Dynamic pool 
+    	4 { 
+        	$dataDynamic = generateDataDynamicPool $poolIdentifier 
+        	$urlOrchestrator = "https://fr0-vsdaas-p65.eu.airbus.corp:8281/vco/api/workflows/"+$wfIDDynamicPoolDelete+"/executions" 
+        	[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
+        	Invoke-WebRequest -Uri $urlOrchestrator -Headers $Headers -Method Post -Body $dataDynamic -ContentType 'application/json' 
+    	} 
+    	#Static dedicated pool 
+   	<#1 { 
+        	$dataStaticDedi = generateDataStaticDedicatedPool $poolIdentifier 
+        	$urlOrchestrator = "https://fr0-vsdaas-p65.eu.airbus.corp:8281/vco/api/workflows/"+$wfIDStaticDediPoolDelete+"/executions" 
+        	[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
+        	Invoke-WebRequest -Uri $urlOrchestrator -Headers $Headers -Method Post -Body $dataStaticDedi -ContentType 'application/json' 
+       	}#> 
+    	#Static floating pool 
+    	<#0 { 
+        	$dataStaticFloating = generateDataStaticFloatingPool $poolIdentifier 
+        	$urlOrchestrator = "https://fr0-vsdaas-p65.eu.airbus.corp:8281/vco/api/workflows/"+$wfIDStaticFloatPoolDelete+"/executions" 
+        	[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
+        	Invoke-WebRequest -Uri $urlOrchestrator -Headers $Headers -Method Post -Body $dataStaticFloating -ContentType 'application/json' -UseBasicParsing 
+    	}#> 
+	} 
+	Start-Sleep 10 
+} 
