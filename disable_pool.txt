@@ -1,0 +1,36 @@
+############################################################################## 
+## 
+## Enable / Disable pool from a given list and disconnect users 
+## 
+############################################################################## 
+ #"D:\Modules\Connect_HvServer_param.ps1" 
+$cred = Get-Credential -Message "Enter Login Credentials" 
+#$mycred = Get-Credential 
+#$Cred = IMPORT-CLIXML "D:\Scripts\LGU\Horizon_report\Final\SA-K455-VDI.xml" 
+ 
+$vdiserver = 'DE0-VSDAAS-P72' 
+ 
+connect-hvserver $vdiserver -Credential $Cred 
+<# 
+foreach ($broker in $brokers) 
+{ 
+ 
+######################################################################## 
+######### Connections Brokers ##################### 
+######################################################################## 
+ 
+$conn = Connect-HVServer -Server $broker -Credential $cred -Domain "eu" -Force 
+ 
+################################### Get vCenter ID ######### 
+ 
+ 
+#> 
+$List_pools = Import-csv "D:\Scripts\LGU\DaasFE\Pool_decomissioning\Pool_Disable\Pools_To_disable.csv" 
+ 
+foreach ($pool in $List_pools.Pool) { 
+Set-Hvpool -PoolName $pool -Disable 
+$pool  
+} 
+DisConnect-HVServer * -Confirm:$false 
+ 
+#$Error_Disable | Export-csv "d:\SCripts\BRI\Error_Disable.csv" -Delimiter ';' -NoTypeInformation 
